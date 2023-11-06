@@ -41,13 +41,13 @@ const RunContext = struct {
 
 const Substitutions = struct {};
 
-pub fn run(rel: Relation, ctx: *RunContext, subst: Substitutions, results: *std.ArrayList(Term)) !void {
-    const root_var = RunContext.new_var();
-    const goal = rel(root_var);
+pub fn run_goal(goal: *const Goal, ctx: *RunContext, subst: Substitutions, results: *std.ArrayList(Term)) !void {
     switch (goal) {
         .fail => {},
-        .fresh => |inner_rel| {
-            try run(inner_rel, ctx, subst, results);
+        .fresh => |rel| {
+            const root_var = RunContext.new_var();
+            const inner_goal = rel(root_var);
+            try run_goal(inner_goal, ctx, subst, results);
         },
     }
 }

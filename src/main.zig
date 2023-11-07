@@ -190,11 +190,16 @@ const SymGen = struct {
 /// records results
 const Transcript = struct {
     log: std.ArrayList(Substitutions),
+    /// max number of results
+    cap: usize = std.math.maxInt(usize),
 
     pub fn init(a: std.mem.Allocator) @This() {
         return .{
             .log = std.ArrayList(Substitutions).init(a),
         };
+    }
+    pub fn initChild(this: @This()) @This() {
+        return init(this.log.allocator);
     }
     pub fn deinit(this: @This()) void {
         for (this.log.items) |*subst| {
@@ -204,6 +209,7 @@ const Transcript = struct {
     }
     pub fn add(this: *@This(), subst: Substitutions) !void {
         try this.log.append(subst);
+        if (this.log.items.len >= this.cap) return error.Transcript_ResultCapReached;
     }
     pub fn items(this: @This()) []const Substitutions {
         return this.log.items;
@@ -229,7 +235,7 @@ pub fn run_goal(goal: *const Goal, symgen: *SymGen, subst: Substitutions, transc
             }
         },
         .conj => |o| {
-            var tx = Transcript.init(transcript.log.allocator);
+            var tx = transcript.initChild();
             defer tx.deinit();
             try run_goal(o.l, symgen, subst, &tx);
             for (tx.items()) |item_subst| {

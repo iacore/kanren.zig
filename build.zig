@@ -36,6 +36,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    b.installArtifact(main_tests);
 
     const run_main_tests = b.addRunArtifact(main_tests);
 

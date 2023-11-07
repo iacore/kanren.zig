@@ -1,5 +1,5 @@
 const std = @import("std");
-const _t = std.testing;
+const t = std.testing;
 
 test "Table of Contents" {
     var a: Term = undefined;
@@ -35,12 +35,6 @@ const Goal = union(enum) {
 };
 
 const Relation = *const fn (*const Term) *const Goal;
-// "const a"
-
-/// State for generating symbols
-const RunContext = struct {
-    next_var: var_id = 0,
-};
 
 const Substitutions = struct {
     map: std.AutoHashMap(var_id, *const Term),
@@ -55,21 +49,23 @@ const Substitutions = struct {
         return .{ .map = try this.map.clone() };
     }
     pub fn lookup(this: *const @This(), term: *const Term) *const Term {
-        var _term = term;
+        // std.log.err("lookup: {} {}", .{ this.*, term.* });
+        var current = term;
         while (true) {
-            switch (_term.*) {
+            switch (current.*) {
                 .Var => |id| {
                     if (this.map.get(id)) |bound| {
-                        _term = bound;
+                        // std.log.err("lookup(bound)!", .{});
+                        current = bound;
                     } else {
-                        return _term;
+                        return current;
                     }
                 },
                 .Cst => |_| {
-                    return term;
+                    return current;
                 },
                 .Con => |_| {
-                    return term;
+                    return current;
                 },
             }
         }
@@ -79,44 +75,32 @@ const Substitutions = struct {
         try map.put(id, value);
         return .{ .map = map };
     }
-};
-
-const ResultsRecorder = struct {};
-
-pub fn run_goal(goal: *const Goal, ctx: *RunContext, subst: Substitutions, transcript: *ResultsRecorder) !void {
-    switch (goal) {
-        .fail => {},
-        .fresh => |rel| {
-            const root_var = RunContext.new_var();
-            const inner_goal = rel(root_var);
-            try run_goal(inner_goal, ctx, subst, transcript);
-        },
-        .invoke => |o| {
-            const inner_goal = o.rel(o.term);
-            try run_goal(inner_goal, ctx, subst, transcript);
-        },
-        .unify => |o| {
-            const maybe_subst = unify(subst, o.l, o.r);
-            if (maybe_subst) |subst_next| transcript.add_result(subst_next);
-        },
-        .conj => |o| {
-            var tx = ResultsRecorder.init();
-            try run_goal(o.l, ctx, subst, &tx);
-            for (tx.items()) |item_subst| {
-                try run_goal(o.r, ctx, item_subst, transcript);
+    pub fn format(this: *const @This(), fmt: []const u8, options: anytype, writer: anytype) !void {
+        _ = options;
+        _ = fmt;
+        try writer.writeAll("Subst{ ");
+        var it = this.map.iterator();
+        var first = true;
+        while (it.next()) |entry| {
+            if (first) {
+                first = false;
+            } else {
+                try writer.writeAll(", ");
             }
-        },
-        .disj => |o| {
-            try run_goal(o.l, ctx, subst, transcript);
-            try run_goal(o.r, ctx, subst, transcript);
-        },
+            try writer.print("{} -> {}", .{
+                entry.key_ptr.*,
+                entry.value_ptr.*,
+            });
+        }
+        try writer.writeAll(" }");
     }
-}
+};
 
 // always allocate new subst (if not null)
 pub fn unify(subst: Substitutions, _l: *const Term, _r: *const Term) !?Substitutions {
     const l: *const Term = subst.lookup(_l);
     const r: *const Term = subst.lookup(_r);
+    // std.log.warn("unify: {} {}", .{ l.*, r.* });
     switch (l.*) {
         .Var => |l_id| {
             switch (r.*) {
@@ -176,16 +160,132 @@ pub fn unify(subst: Substitutions, _l: *const Term, _r: *const Term) !?Substitut
 test "unify - sanity test" {
     const t0 = Term{ .Var = 10 };
     const t1 = Term{ .Cst = 42 };
-    var subst0 = Substitutions.initEmpty(_t.allocator);
+    var subst0 = Substitutions.initEmpty(t.allocator);
     defer subst0.deinit();
     var subst1 = (try unify(subst0, &t0, &t1)).?;
     defer subst1.deinit();
 
-    try _t.expectEqual(@as(usize, 1), subst1.map.count());
+    try t.expectEqual(@as(usize, 1), subst1.map.count());
 
     var it = subst1.map.iterator();
     while (it.next()) |entry| {
-        try _t.expectEqual(@as(var_id, 10), entry.key_ptr.*);
-        try _t.expectEqual(&t1, entry.value_ptr.*);
+        try t.expectEqual(@as(var_id, 10), entry.key_ptr.*);
+        try t.expectEqual(&t1, entry.value_ptr.*);
     }
+}
+
+/// State for generating symbols
+const IdGenerator = struct {
+    next_var: var_id = 0,
+
+    pub fn new_var(this: *@This()) Term {
+        const x = this.next_var;
+        this.next_var += 1;
+        return Term{ .Var = x };
+    }
+};
+
+/// records results
+const Transcript = struct {
+    log: std.ArrayList(Substitutions),
+
+    pub fn init(a: std.mem.Allocator) @This() {
+        return .{
+            .log = std.ArrayList(Substitutions).init(a),
+        };
+    }
+    pub fn deinit(this: @This()) void {
+        for (this.log.items) |*subst| {
+            subst.deinit();
+        }
+        this.log.deinit();
+    }
+    pub fn add(this: *@This(), subst: Substitutions) !void {
+        try this.log.append(subst);
+    }
+    pub fn items(this: @This()) []const Substitutions {
+        return this.log.items;
+    }
+};
+
+pub fn run_goal(goal: *const Goal, symgen: *IdGenerator, subst: Substitutions, transcript: *Transcript) !void {
+    switch (goal.*) {
+        .fail => {},
+        .fresh => |rel| {
+            const root_var = symgen.new_var();
+            const inner_goal = rel(&root_var);
+            try run_goal(inner_goal, symgen, subst, transcript);
+        },
+        .invoke => |o| {
+            const inner_goal = o.rel(o.term);
+            try run_goal(inner_goal, symgen, subst, transcript);
+        },
+        .unify => |o| {
+            const maybe_subst = try unify(subst, o.l, o.r);
+            if (maybe_subst) |subst_next| {
+                try transcript.add(subst_next);
+            }
+        },
+        .conj => |o| {
+            var tx = Transcript.init(transcript.log.allocator);
+            defer tx.deinit();
+            try run_goal(o.l, symgen, subst, &tx);
+            for (tx.items()) |item_subst| {
+                try run_goal(o.r, symgen, item_subst, transcript);
+            }
+        },
+        .disj => |o| {
+            try run_goal(o.l, symgen, subst, transcript);
+            try run_goal(o.r, symgen, subst, transcript);
+        },
+    }
+}
+
+test "run goal - sanity test" {
+    const S = struct {
+        var t1: Term = undefined;
+        var t2: Term = undefined;
+        pub fn rel1(_t1: *const Term) *const Goal {
+            t1 = _t1.*;
+            return &Goal{
+                .fresh = &rel2,
+            };
+        }
+        const g2 = Goal{
+            .unify = .{
+                .l = &t2,
+                .r = &t1,
+            },
+        };
+        pub fn rel2(_t2: *const Term) *const Goal {
+            t2 = _t2.*;
+            return &Goal{
+                .conj = .{
+                    .l = &.{
+                        .unify = .{
+                            .l = &t1,
+                            .r = &Term{ .Cst = 1 },
+                        },
+                    },
+                    .r = &g2,
+                },
+            };
+        }
+    };
+    var tx = Transcript.init(t.allocator);
+    defer tx.deinit();
+    var gen = IdGenerator{};
+    try run_goal(
+        &Goal{
+            .fresh = &S.rel1,
+        },
+        &gen,
+        Substitutions.initEmpty(t.allocator),
+        &tx,
+    );
+    try t.expectEqual(@as(usize, 1), tx.log.items.len);
+
+    const s = try std.fmt.allocPrint(t.allocator, "{}", .{tx.log.items[0]});
+    defer t.allocator.free(s);
+    try t.expectEqualStrings("Subst{ 0 -> main.Term{ .Cst = 1 }, 1 -> main.Term{ .Cst = 1 } }", s);
 }

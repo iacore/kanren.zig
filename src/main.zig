@@ -1,11 +1,12 @@
 const std = @import("std");
+const coro = @import("coro");
 const t = std.testing;
+const Allocator = std.mem.Allocator;
 
 test "Table of Contents" {
     // basic concepts
     _ = Term;
     _ = Goal;
-    _ = Relation;
 
     _ = .{ // algorithms
         unify,
@@ -31,16 +32,16 @@ pub const Goal = union(enum) {
     unify: struct { l: Term, r: Term },
     disj: struct { l: *const Goal, r: *const Goal },
     conj: struct { l: *const Goal, r: *const Goal },
-    fresh: *const fn (Term) *const Goal, // zig bug: can't use Relation here
-    invoke: struct { rel: *const fn (Term) *const Goal, term: Term },
+    fresh: Relation, // zig bug: can't use Relation here
+    invoke: struct { rel: Relation, term: Term },
 };
 
-pub const Relation = fn (Term) *const Goal;
+pub const Relation = *const fn (Allocator, Term) Allocator.Error!*const Goal;
 
 pub const Substitutions = struct {
     map: std.AutoHashMap(var_id, Term),
 
-    pub fn initEmpty(a: std.mem.Allocator) @This() {
+    pub fn initEmpty(a: Allocator) @This() {
         return .{ .map = std.meta.FieldType(@This(), .map).init(a) };
     }
     pub fn deinit(this: *@This()) void {
@@ -177,11 +178,11 @@ test "unify - sanity test" {
 
 /// state for generating var_id
 pub const SymGen = struct {
-    next_var: var_id = 0,
+    next_var_id: var_id = 0,
 
     pub fn new_var(this: *@This()) Term {
-        const x = this.next_var;
-        this.next_var += 1;
+        const x = this.next_var_id;
+        this.next_var_id += 1;
         return Term{ .Var = x };
     }
 };
@@ -190,7 +191,7 @@ pub const SymGen = struct {
 pub const Transcript = struct {
     log: std.ArrayList(Substitutions),
 
-    pub fn init(a: std.mem.Allocator) @This() {
+    pub fn init(a: Allocator) @This() {
         return .{
             .log = std.ArrayList(Substitutions).init(a),
         };
@@ -202,13 +203,11 @@ pub const Transcript = struct {
         this.log.deinit();
     }
     pub fn add(this: *@This(), subst: Substitutions) !void {
-        // std.log.warn("found solution: {}", .{subst});
-        // todo: add cap to this
         try this.log.append(subst);
     }
 };
 
-pub fn run_goal(goal: *const Goal, symgen: *SymGen, subst: Substitutions, transcript: *Transcript) !void {
+pub fn run_goal(a: Allocator, goal: *const Goal, symgen: *SymGen, transcript: *Transcript, subst: Substitutions) !void {
     switch (goal.*) {
         .fail => {},
         .success => {
@@ -216,12 +215,16 @@ pub fn run_goal(goal: *const Goal, symgen: *SymGen, subst: Substitutions, transc
         },
         .fresh => |rel| {
             const root_var = symgen.new_var();
-            const inner_goal = rel(root_var);
-            try run_goal(inner_goal, symgen, subst, transcript);
+            var arena = std.heap.ArenaAllocator.init(a);
+            defer arena.deinit();
+            const inner_goal = try rel(arena.allocator(), root_var);
+            try run_goal(a, inner_goal, symgen, transcript, subst);
         },
         .invoke => |o| {
-            const inner_goal = o.rel(o.term);
-            try run_goal(inner_goal, symgen, subst, transcript);
+            var arena = std.heap.ArenaAllocator.init(a);
+            defer arena.deinit();
+            const inner_goal = try o.rel(arena.allocator(), o.term);
+            try run_goal(a, inner_goal, symgen, transcript, subst);
         },
         .unify => |o| {
             const maybe_subst = try unify(subst, o.l, o.r);
@@ -230,62 +233,69 @@ pub fn run_goal(goal: *const Goal, symgen: *SymGen, subst: Substitutions, transc
             }
         },
         .conj => |o| {
-            var tx = Transcript.init(transcript.log.allocator);
+            var tx = Transcript.init(a);
             defer tx.deinit();
-            try run_goal(o.l, symgen, subst, &tx);
+            try run_goal(a, o.l, symgen, &tx, subst);
             for (tx.log.items) |item_subst| {
-                try run_goal(o.r, symgen, item_subst, transcript);
+                try run_goal(a, o.r, symgen, transcript, item_subst);
             }
         },
         .disj => |o| {
-            try run_goal(o.l, symgen, subst, transcript);
-            try run_goal(o.r, symgen, subst, transcript);
+            try run_goal(a, o.l, symgen, transcript, subst);
+            try run_goal(a, o.r, symgen, transcript, subst);
         },
     }
 }
 
-test "run goal - sanity test" {
+test "run_goal - sanity test" {
     const S = struct {
         var t1: Term = undefined;
         var t2: Term = undefined;
-        pub fn rel1(_t1: Term) *const Goal {
+        pub fn rel1(a: Allocator, _t1: Term) !*const Goal {
             t1 = _t1;
-            return &Goal{
+            const g = try a.create(Goal);
+            g.* = Goal{
                 .fresh = &rel2,
             };
+            return g;
         }
-        pub fn rel2(_t2: Term) *const Goal {
+        pub fn rel2(a: Allocator, _t2: Term) !*const Goal {
             t2 = _t2;
-            const g1 = Goal{
+            const g1 = try a.create(Goal);
+            g1.* = Goal{
                 .unify = .{
                     .l = t1,
                     .r = Term{ .Cst = 1 },
                 },
             };
-            const g2 = Goal{
+            const g2 = try a.create(Goal);
+            g2.* = Goal{
                 .unify = .{
                     .l = t2,
                     .r = t1,
                 },
             };
-            return &Goal{
+            const g3 = try a.create(Goal);
+            g3.* = Goal{
                 .conj = .{
-                    .l = &g1,
-                    .r = &g2,
+                    .l = g1,
+                    .r = g2,
                 },
             };
+            return g3;
         }
     };
     var tx = Transcript.init(t.allocator);
     defer tx.deinit();
     var gen = SymGen{};
     try run_goal(
+        t.allocator,
         &Goal{
             .fresh = &S.rel1,
         },
         &gen,
-        Substitutions.initEmpty(t.allocator),
         &tx,
+        Substitutions.initEmpty(t.allocator),
     );
     try t.expectEqual(@as(usize, 1), tx.log.items.len);
 
@@ -293,3 +303,43 @@ test "run goal - sanity test" {
     defer t.allocator.free(s);
     try t.expectEqualStrings("Subst{ 0 -> main.Term{ .Cst = 1 }, 1 -> main.Term{ .Cst = 1 } }", s);
 }
+
+// pub const LoggingTranscript = struct {
+//     pub fn add(this: *@This(), _subst: Substitutions) !void {
+//         var subst = _subst;
+//         _ = this;
+//         defer subst.deinit();
+//         std.log.warn("solution found: {}", .{subst});
+//     }
+// };
+
+// test "h" {
+//     const g1 = Goal{
+//         .unify = .{
+//             .l = Term{ .Var = 0 },
+//             .r = Term{ .Cst = 1 },
+//         },
+//     };
+//     const g2 = Goal{
+//         .unify = .{
+//             .l = Term{ .Var = 0 },
+//             .r = Term{ .Cst = 2 },
+//         },
+//     };
+//     const g3 = Goal{
+//         .disj = .{
+//             .l = &g1,
+//             .r = &g2,
+//         },
+//     };
+//     _ = g3;
+
+//     var gen = SymGen{};
+//     _ = gen;
+
+//     var tx = Transcript.init(t.allocator);
+//     defer tx.deinit();
+//     // tx.break_on_found = true;
+
+//     // try run_goal(&g3, &gen, Substitutions.initEmpty(t.allocator), &tx);
+// }

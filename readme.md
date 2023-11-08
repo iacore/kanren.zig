@@ -1,5 +1,8 @@
 ## microkanren for Zig
 
+TODO
+
+- [ ] make run_goal resumable (and non-recursive)
 
 ## References
 

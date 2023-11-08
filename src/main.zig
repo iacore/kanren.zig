@@ -15,20 +15,19 @@ test "Table of Contents" {
 
 // tbh, can be string, but this is faster
 /// variable identifier
-const var_id = u16;
+pub const var_id = u16;
 /// constractor identifier
-const con_id = u16;
-/// relation identifier
-const rel_name = u16;
+pub const con_id = u16;
 
-const Term = union(enum) {
+pub const Term = union(enum) {
     Var: var_id,
     Cst: con_id,
     Con: struct { name: con_id, inl: *const Term, inr: *const Term },
 };
 
-const Goal = union(enum) {
+pub const Goal = union(enum) {
     fail,
+    success,
     unify: struct { l: Term, r: Term },
     disj: struct { l: *const Goal, r: *const Goal },
     conj: struct { l: *const Goal, r: *const Goal },
@@ -36,9 +35,9 @@ const Goal = union(enum) {
     invoke: struct { rel: *const fn (Term) *const Goal, term: Term },
 };
 
-const Relation = fn (Term) *const Goal;
+pub const Relation = fn (Term) *const Goal;
 
-const Substitutions = struct {
+pub const Substitutions = struct {
     map: std.AutoHashMap(var_id, Term),
 
     pub fn initEmpty(a: std.mem.Allocator) @This() {
@@ -177,7 +176,7 @@ test "unify - sanity test" {
 }
 
 /// state for generating var_id
-const SymGen = struct {
+pub const SymGen = struct {
     next_var: var_id = 0,
 
     pub fn new_var(this: *@This()) Term {
@@ -188,7 +187,7 @@ const SymGen = struct {
 };
 
 /// records results
-const Transcript = struct {
+pub const Transcript = struct {
     log: std.ArrayList(Substitutions),
 
     pub fn init(a: std.mem.Allocator) @This() {
@@ -203,16 +202,18 @@ const Transcript = struct {
         this.log.deinit();
     }
     pub fn add(this: *@This(), subst: Substitutions) !void {
+        // std.log.warn("found solution: {}", .{subst});
+        // todo: add cap to this
         try this.log.append(subst);
-    }
-    pub fn items(this: @This()) []const Substitutions {
-        return this.log.items;
     }
 };
 
 pub fn run_goal(goal: *const Goal, symgen: *SymGen, subst: Substitutions, transcript: *Transcript) !void {
     switch (goal.*) {
         .fail => {},
+        .success => {
+            try transcript.add(try subst.clone());
+        },
         .fresh => |rel| {
             const root_var = symgen.new_var();
             const inner_goal = rel(root_var);
@@ -232,7 +233,7 @@ pub fn run_goal(goal: *const Goal, symgen: *SymGen, subst: Substitutions, transc
             var tx = Transcript.init(transcript.log.allocator);
             defer tx.deinit();
             try run_goal(o.l, symgen, subst, &tx);
-            for (tx.items()) |item_subst| {
+            for (tx.log.items) |item_subst| {
                 try run_goal(o.r, symgen, item_subst, transcript);
             }
         },

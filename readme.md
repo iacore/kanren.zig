@@ -2,7 +2,9 @@
 
 TODO
 
-- [ ] make run_goal resumable (and non-recursive)
+- [x] make run_goal limit results (set Transcript.cap)
+- [ ] make run_goal resumable
+- [ ] make run_goal non-recursive
 
 ## References
 

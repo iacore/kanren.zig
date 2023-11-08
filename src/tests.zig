@@ -99,14 +99,16 @@ test "sudoku_4x4" {
         try goal_builder.fix(var_id, number);
     }
 
-    // var tx = kanren.Transcript.init(t.allocator);
-    // defer tx.deinit();
-    // var gen = kanren.SymGen{};
-    // try kanren.run_goal(
-    //     goal_builder.g,
-    //     &gen,
-    //     kanren.Substitutions.initEmpty(t.allocator),
-    //     &tx,
-    // );
-    // std.log.warn("#solutions={}", .{tx.log.items.len});
+    var tx = kanren.Transcript.init(t.allocator);
+    defer tx.deinit();
+    tx.cap = 1;
+    var gen = kanren.SymGen{};
+    kanren.run_goal(
+        t.allocator,
+        goal_builder.g,
+        &gen,
+        &tx,
+        kanren.SubstitutionMap.init(t.allocator),
+    ) catch |e| if (e != error.TranscriptCapacityReached) return e;
+    std.log.warn("#solutions={}", .{tx.log.items.len});
 }

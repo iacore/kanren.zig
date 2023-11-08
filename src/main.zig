@@ -194,6 +194,7 @@ pub const SymGen = struct {
 /// records results
 pub const Transcript = struct {
     log: std.ArrayList(SubstitutionMap),
+    cap: usize = std.math.maxInt(usize),
 
     pub fn init(a: Allocator) @This() {
         return .{
@@ -208,6 +209,9 @@ pub const Transcript = struct {
     }
     pub fn add(this: *@This(), subst: SubstitutionMap) !void {
         try this.log.append(subst);
+        if (this.log.items.len >= this.cap) {
+            return error.TranscriptCapacityReached;
+        }
     }
 };
 

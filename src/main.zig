@@ -22,11 +22,11 @@ pub const con_id = u16;
 
 pub const Term = union(enum) {
     /// unbound variable.
-    free: var_id,
+    Var: var_id,
     /// 0-arity constructor. numbers can be put here as well
-    sent: con_id,
+    Cst: con_id,
     /// 2-arity constructor.
-    cons: struct { name: con_id, inl: *const Term, inr: *const Term },
+    Con: struct { name: con_id, inl: *const Term, inr: *const Term },
 };
 
 pub const Goal = union(enum) {
@@ -176,6 +176,25 @@ test "unify - sanity test" {
     var it = subst1.map.iterator();
     while (it.next()) |entry| {
         try t.expectEqual(@as(var_id, 10), entry.key_ptr.*);
+        try t.expectEqual(t1, entry.value_ptr.*);
+    }
+}
+
+test "unify - sanity test 2" {
+    const t0 = Term{ .Cst = 11 };
+    const t1 = Term{ .Cst = 22 };
+    const t2 = Term{ .Var = 0 };
+    const t3 = Term{ .Con = .{ .name = 44, .inl = &t0, .inr = &t1 } };
+    const t4 = Term{ .Con = .{ .name = 44, .inl = &t0, .inr = &t2 } };
+    var subst0 = SubstitutionMap.init(t.allocator);
+    defer subst0.deinit();
+    var subst1 = (try unify(subst0, t3, t4)).?;
+    defer subst1.deinit();
+
+    try t.expectEqual(@as(usize, 1), subst1.map.count());
+
+    var it = subst1.map.iterator();
+    while (it.next()) |entry| {
         try t.expectEqual(t1, entry.value_ptr.*);
     }
 }

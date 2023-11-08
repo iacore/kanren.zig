@@ -110,5 +110,5 @@ test "sudoku_4x4" {
         &tx,
         kanren.SubstitutionMap.init(t.allocator),
     ) catch |e| if (e != error.TranscriptCapacityReached) return e;
-    std.log.warn("#solutions={}", .{tx.log.items.len});
+    try t.expectEqual(@as(usize, 1), tx.log.items.len);
 }

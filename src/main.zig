@@ -21,8 +21,11 @@ pub const var_id = u16;
 pub const con_id = u16;
 
 pub const Term = union(enum) {
+    /// unbound variable.
     Var: var_id,
+    /// 0-arity constructor. numbers can be put here as well
     Cst: con_id,
+    /// 2-arity constructor.
     Con: struct { name: con_id, inl: *const Term, inr: *const Term },
 };
 
@@ -38,10 +41,11 @@ pub const Goal = union(enum) {
 
 pub const Relation = *const fn (Allocator, Term) Allocator.Error!*const Goal;
 
-pub const Substitutions = struct {
+pub const SubstitutionMap = struct {
     map: std.AutoHashMap(var_id, Term),
 
-    pub fn initEmpty(a: Allocator) @This() {
+    /// init empty substitution map
+    pub fn init(a: Allocator) @This() {
         return .{ .map = std.meta.FieldType(@This(), .map).init(a) };
     }
     pub fn deinit(this: *@This()) void {
@@ -99,7 +103,7 @@ pub const Substitutions = struct {
 };
 
 // always allocate new subst (if not null)
-pub fn unify(subst: Substitutions, _l: Term, _r: Term) !?Substitutions {
+pub fn unify(subst: SubstitutionMap, _l: Term, _r: Term) !?SubstitutionMap {
     const l: Term = subst.lookup(_l);
     const r: Term = subst.lookup(_r);
     // std.log.warn("unify: {} {}", .{ l.*, r.* });
@@ -162,7 +166,7 @@ pub fn unify(subst: Substitutions, _l: Term, _r: Term) !?Substitutions {
 test "unify - sanity test" {
     const t0 = Term{ .Var = 10 };
     const t1 = Term{ .Cst = 42 };
-    var subst0 = Substitutions.initEmpty(t.allocator);
+    var subst0 = SubstitutionMap.init(t.allocator);
     defer subst0.deinit();
     var subst1 = (try unify(subst0, t0, t1)).?;
     defer subst1.deinit();
@@ -178,22 +182,22 @@ test "unify - sanity test" {
 
 /// state for generating var_id
 pub const SymGen = struct {
-    next_var_id: var_id = 0,
+    next_var_id: var_id = std.math.maxInt(var_id),
 
     pub fn new_var(this: *@This()) Term {
         const x = this.next_var_id;
-        this.next_var_id += 1;
+        this.next_var_id -= 1;
         return Term{ .Var = x };
     }
 };
 
 /// records results
 pub const Transcript = struct {
-    log: std.ArrayList(Substitutions),
+    log: std.ArrayList(SubstitutionMap),
 
     pub fn init(a: Allocator) @This() {
         return .{
-            .log = std.ArrayList(Substitutions).init(a),
+            .log = std.ArrayList(SubstitutionMap).init(a),
         };
     }
     pub fn deinit(this: @This()) void {
@@ -202,12 +206,12 @@ pub const Transcript = struct {
         }
         this.log.deinit();
     }
-    pub fn add(this: *@This(), subst: Substitutions) !void {
+    pub fn add(this: *@This(), subst: SubstitutionMap) !void {
         try this.log.append(subst);
     }
 };
 
-pub fn run_goal(a: Allocator, goal: *const Goal, symgen: *SymGen, transcript: *Transcript, subst: Substitutions) !void {
+pub fn run_goal(a: Allocator, goal: *const Goal, symgen: *SymGen, transcript: *Transcript, subst: SubstitutionMap) !void {
     switch (goal.*) {
         .fail => {},
         .success => {
@@ -295,13 +299,17 @@ test "run_goal - sanity test" {
         },
         &gen,
         &tx,
-        Substitutions.initEmpty(t.allocator),
+        SubstitutionMap.init(t.allocator),
     );
     try t.expectEqual(@as(usize, 1), tx.log.items.len);
 
-    const s = try std.fmt.allocPrint(t.allocator, "{}", .{tx.log.items[0]});
-    defer t.allocator.free(s);
-    try t.expectEqualStrings("Subst{ 0 -> main.Term{ .Cst = 1 }, 1 -> main.Term{ .Cst = 1 } }", s);
+    const subst = tx.log.items[0];
+    try t.expectEqual(@as(usize, 2), subst.map.count());
+
+    var it = subst.map.iterator();
+    while (it.next()) |entry| {
+        try t.expectEqual(Term{ .Cst = 1 }, entry.value_ptr.*);
+    }
 }
 
 // pub const LoggingTranscript = struct {

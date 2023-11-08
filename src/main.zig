@@ -22,11 +22,11 @@ pub const con_id = u16;
 
 pub const Term = union(enum) {
     /// unbound variable.
-    Var: var_id,
+    free: var_id,
     /// 0-arity constructor. numbers can be put here as well
-    Cst: con_id,
+    sent: con_id,
     /// 2-arity constructor.
-    Con: struct { name: con_id, inl: *const Term, inr: *const Term },
+    cons: struct { name: con_id, inl: *const Term, inr: *const Term },
 };
 
 pub const Goal = union(enum) {
@@ -315,43 +315,3 @@ test "run_goal - sanity test" {
         try t.expectEqual(Term{ .Cst = 1 }, entry.value_ptr.*);
     }
 }
-
-// pub const LoggingTranscript = struct {
-//     pub fn add(this: *@This(), _subst: Substitutions) !void {
-//         var subst = _subst;
-//         _ = this;
-//         defer subst.deinit();
-//         std.log.warn("solution found: {}", .{subst});
-//     }
-// };
-
-// test "h" {
-//     const g1 = Goal{
-//         .unify = .{
-//             .l = Term{ .Var = 0 },
-//             .r = Term{ .Cst = 1 },
-//         },
-//     };
-//     const g2 = Goal{
-//         .unify = .{
-//             .l = Term{ .Var = 0 },
-//             .r = Term{ .Cst = 2 },
-//         },
-//     };
-//     const g3 = Goal{
-//         .disj = .{
-//             .l = &g1,
-//             .r = &g2,
-//         },
-//     };
-//     _ = g3;
-
-//     var gen = SymGen{};
-//     _ = gen;
-
-//     var tx = Transcript.init(t.allocator);
-//     defer tx.deinit();
-//     // tx.break_on_found = true;
-
-//     // try run_goal(&g3, &gen, Substitutions.initEmpty(t.allocator), &tx);
-// }
